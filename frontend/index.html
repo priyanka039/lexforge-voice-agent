@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LexForge — Moot Court Bench</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <object data="/icons.svg" type="image/svg+xml" class="svg-sprite" aria-hidden="true"></object>
+
+  <div class="courtroom">
+    <header class="top-bar">
+      <div class="brand">
+        <div class="crest"><svg class="ico"><use href="/icons.svg#icon-scales"></use></svg></div>
+        <div>
+          <h1>LexForge</h1>
+          <p>Moot Court Voice Bench</p>
+        </div>
+      </div>
+      <div class="status-row">
+        <span class="status-chip" id="pill-timer"><span class="dot"></span>00:00</span>
+        <span class="status-chip" id="pill-conn"><span class="dot"></span>Connecting</span>
+        <span class="status-chip" id="pill-voice"><span class="dot"></span>Voice</span>
+        <span class="status-chip" id="pill-brain"><span class="dot"></span>Brain</span>
+      </div>
+    </header>
+
+    <div id="alert-banner" class="alert-banner hidden" role="alert"></div>
+
+    <div class="layout">
+      <!-- Main hearing chamber -->
+      <section class="hearing-chamber">
+        <div class="chamber-header">
+          <div class="court-caption">
+            <span class="caption-label">In the matter of</span>
+            <h2 id="matter-title">Kesavananda Bharati v. State of Kerala</h2>
+            <p id="matter-court">Before the Supreme Court of India</p>
+          </div>
+          <div class="session-indicator" id="sessionIndicator">
+            <span class="indicator-dot"></span>
+            <span id="sessionStateText">Court not yet convened</span>
+          </div>
+        </div>
+
+        <div class="transcript-wrap">
+          <div id="transcript">
+            <div class="welcome-state" id="transcript-empty">
+              <div class="welcome-icon"><svg class="ico lg"><use href="/icons.svg#icon-gavel"></use></svg></div>
+              <h3>Convene the Court</h3>
+              <p>Press <strong>Rise and address the bench</strong>, then make your submission. The bench will question you on law and fact.</p>
+              <p class="hint" id="voice-hint">Allow microphone access when prompted for live voice.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="hearing-dock">
+          <button class="primary-btn" id="micBtn" type="button">
+            <svg class="ico"><use href="/icons.svg#icon-mic"></use></svg>
+            <span id="micLabel">Rise and address the bench</span>
+          </button>
+          <div class="text-row">
+            <input type="text" id="textInput" placeholder="Type your submission to the bench…" autocomplete="off" />
+            <button type="button" class="secondary-btn" id="sendBtn">Submit</button>
+          </div>
+          <div class="action-row">
+            <button type="button" class="action-btn" id="counterBtn"><svg class="ico sm"><use href="/icons.svg#icon-sword"></use></svg> Opposing counsel</button>
+            <button type="button" class="action-btn" id="helpBtn"><svg class="ico sm"><use href="/icons.svg#icon-coach"></use></svg> Coach me</button>
+            <button type="button" class="action-btn" id="feedbackBtn"><svg class="ico sm"><use href="/icons.svg#icon-flag"></use></svg> End hearing</button>
+            <button type="button" class="action-btn" id="downloadBtn"><svg class="ico sm"><use href="/icons.svg#icon-download"></use></svg> Transcript</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Side panel -->
+      <aside class="side-panel">
+        <nav class="panel-nav" role="tablist">
+          <button type="button" class="nav-tab active" data-tab="counsel"><svg class="ico sm"><use href="/icons.svg#icon-bench"></use></svg> Counsel</button>
+          <button type="button" class="nav-tab" data-tab="brief"><svg class="ico sm"><use href="/icons.svg#icon-brief"></use></svg> Brief</button>
+          <button type="button" class="nav-tab" data-tab="notes"><svg class="ico sm"><use href="/icons.svg#icon-note"></use></svg> Notes</button>
+          <button type="button" class="nav-tab" data-tab="authorities"><svg class="ico sm"><use href="/icons.svg#icon-book"></use></svg> Cases</button>
+          <button type="button" class="nav-tab" data-tab="settings"><svg class="ico sm"><use href="/icons.svg#icon-settings"></use></svg> Bench</button>
+        </nav>
+
+        <div class="panel-body">
+          <section class="pane active" data-pane="counsel">
+            <h3 class="pane-title">The Bench and Counsel</h3>
+            <div id="agents"></div>
+          </section>
+
+          <section class="pane" data-pane="brief">
+            <h3 class="pane-title">Case Brief</h3>
+            <div class="field"><label>Matter title</label><input id="b-title" value="Kesavananda Bharati v. State of Kerala" /></div>
+            <div class="row2">
+              <div class="field"><label>Court</label><input id="b-court" value="Supreme Court of India" /></div>
+              <div class="field"><label>You represent</label>
+                <select id="b-side"><option value="appellant">Appellant</option><option value="respondent">Respondent</option></select>
+              </div>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Appellant</label><input id="b-appellant" value="Kesavananda Bharati" /></div>
+              <div class="field"><label>Respondent</label><input id="b-respondent" value="State of Kerala" /></div>
+            </div>
+            <div class="field"><label>Facts</label><textarea id="b-facts">Challenge to constitutional amendments curtailing fundamental rights; scope of Parliament's amending power under Article 368.</textarea></div>
+            <div class="field"><label>Issues (one per line)</label><textarea id="b-issues">Whether Parliament's power to amend the Constitution is unlimited.&#10;Whether fundamental rights can be abrogated by amendment.</textarea></div>
+            <button type="button" class="btn-gold" id="briefBtn">Update brief</button>
+          </section>
+
+          <section class="pane" data-pane="notes">
+            <h3 class="pane-title">Bench Notes</h3>
+            <div id="notes"><div class="empty">Weakness analysis and citation checks appear here.</div></div>
+          </section>
+
+          <section class="pane" data-pane="authorities">
+            <h3 class="pane-title">Authorities</h3>
+            <div id="precedents"><div class="empty">Cited and retrieved cases appear here.</div></div>
+          </section>
+
+          <section class="pane" data-pane="settings">
+            <h3 class="pane-title">Bench Settings</h3>
+            <div class="field">
+              <label>Temperament</label>
+              <select id="s-temperament">
+                <option value="cold">Cold — lets you develop your argument</option>
+                <option value="balanced" selected>Balanced — appellate bench</option>
+                <option value="hot">Hot — interventionist</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Judge persona (optional)</label>
+              <input id="s-persona" placeholder="e.g. sceptical constitutional law expert" />
+            </div>
+            <button type="button" class="btn-gold" id="settingsBtn">Apply settings</button>
+
+            <div id="feedback-section" class="feedback-section hidden">
+              <h3 class="pane-title sub">Bench Feedback</h3>
+              <div id="feedback"></div>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
