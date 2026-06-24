@@ -20,8 +20,17 @@ from typing import Any, AsyncIterator, Optional
 from .agents import (CitationAgent, CounterAgent, FeedbackAgent, JudgeAgent,
                      LLMClient, Message, PrecedentAgent, WeaknessAgent, build_llm)
 from .config import Settings
+from .ledger import (
+    FinalLedger,
+    apply_agent_output_to_ledger,
+    compress_ledger,
+    recompute_confidence,
+    sync_ledger_from_state,
+)
+from .language import validate_and_rewrite_spoken
 from .retrieval import build_retriever, detect_topics, extract_citations
-from .state import Intent, MootCourtState, Speaker
+from .runtime import VocabSnapshot
+from .state import Intent, MootCourtState, PracticeMode, Speaker
 
 
 @dataclass
@@ -96,10 +105,11 @@ class Router:
 
 
 class Orchestrator:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, vocab: VocabSnapshot | None = None):
         self.settings = settings
+        self.vocab = vocab
         self.llm: LLMClient = build_llm(settings)
-        self.retriever = build_retriever(settings)
+        self.retriever = build_retriever(settings, vocab=vocab)
         self.router = Router(self.llm, settings)
         self.judge = JudgeAgent(self.llm, settings)
         self.precedent = PrecedentAgent(self.llm, settings, self.retriever)
@@ -148,14 +158,27 @@ class Orchestrator:
             if isinstance(done, Exception) or done is None:
                 continue
             for ev in done:
+                if ev.type == EventType.AGENT_DONE and ev.data.get("data"):
+                    apply_agent_output_to_ledger(
+                        self.state, ev.data.get("agent", ""), ev.data.get("data", {}))
+                elif ev.type == EventType.PRECEDENTS:
+                    apply_agent_output_to_ledger(
+                        self.state, "precedent", {"precedents": ev.data.get("precedents", [])})
+                elif ev.type == EventType.NOTE and ev.data.get("weaknesses"):
+                    apply_agent_output_to_ledger(
+                        self.state, "weakness", {"weaknesses": ev.data.get("weaknesses", [])})
                 yield ev
 
         if not speaker_emitted:
-            # Safety net: the bench always says *something*.
-            async for ev in self._stream_agent("judge", self.judge.stream(self.state),
-                                                role=Speaker.JUDGE):
-                yield ev
+            # Safety net: the bench always says *something* (court mode only).
+            if self.state.practice_mode != PracticeMode.DEBATE:
+                async for ev in self._stream_agent(
+                        "judge",
+                        self.judge.stream(self.state, intent=intent),
+                        role=Speaker.JUDGE):
+                    yield ev
 
+        self._finalize_ledger()
         yield Event(EventType.TURN_DONE, {"state": self.state.to_dict()})
 
     # ---- explicit feedback (also used by the 'End hearing' button) ----
@@ -181,8 +204,10 @@ class Orchestrator:
                                                self.precedent.respond(self.state)):
                 yield ev
             # bench follows up after the authority is stated
-            async for ev in self._stream_agent("judge", self.judge.stream(self.state),
-                                                role=Speaker.JUDGE):
+            async for ev in self._stream_agent(
+                    "judge",
+                    self.judge.stream(self.state, intent=intent),
+                    role=Speaker.JUDGE):
                 yield ev
             return
 
@@ -209,15 +234,22 @@ class Orchestrator:
             # then the judge engages with the substance
             async for ev in self._stream_agent(
                     "judge",
-                    self.judge.stream(self.state, weaknesses=self.state.known_weaknesses),
+                    self.judge.stream(self.state, weaknesses=self.state.known_weaknesses,
+                                      intent=intent),
                     role=Speaker.JUDGE):
                 yield ev
             return
 
         # Default: opening / argument / answer_to_judge / procedural / small_talk
+        if self.state.practice_mode == PracticeMode.DEBATE:
+            async for ev in self._speak_result("counter", self.counter.respond(self.state)):
+                yield ev
+            return
+
         async for ev in self._stream_agent(
                 "judge",
-                self.judge.stream(self.state, weaknesses=self.state.known_weaknesses),
+                self.judge.stream(self.state, weaknesses=self.state.known_weaknesses,
+                                  intent=intent),
                 role=Speaker.JUDGE):
             yield ev
 
@@ -231,14 +263,17 @@ class Orchestrator:
             async for chunk in gen:
                 full.append(chunk)
                 for sentence in acc.push(chunk):
+                    sentence = validate_and_rewrite_spoken(sentence, self.state.language)
                     yield Event(EventType.SPEAK_SENTENCE,
                                 {"agent": agent_name, "text": sentence})
         except Exception as e:  # never let a model error kill the turn
             yield Event(EventType.NOTE, {"agent": agent_name, "error": str(e)})
         tail = acc.flush()
         if tail:
+            tail = validate_and_rewrite_spoken(tail, self.state.language)
             yield Event(EventType.SPEAK_SENTENCE, {"agent": agent_name, "text": tail})
         text = "".join(full).strip()
+        text = validate_and_rewrite_spoken(text, self.state.language)
         if text:
             self.state.add_turn(role, text)
             if agent_name == "judge":
@@ -251,9 +286,12 @@ class Orchestrator:
         yield Event(EventType.AGENT_START, {"agent": agent_name})
         result = await coro
         self._apply_state(result.state_updates)
+        if result.structured:
+            self._record_structured(agent_name, result.spoken_text, result.structured)
         if result.data.get("precedents"):
             yield Event(EventType.PRECEDENTS, {"precedents": result.data["precedents"]})
         text = (result.spoken_text or "").strip()
+        text = validate_and_rewrite_spoken(text, self.state.language)
         if text:
             role = Speaker.JUDGE if agent_name == "judge" else Speaker.SYSTEM
             self.state.add_turn(role, text, meta={"agent": agent_name})
@@ -302,6 +340,21 @@ class Orchestrator:
                 self.state.cited_cases = merged
             else:
                 setattr(self.state, k, v)
+
+    def _finalize_ledger(self) -> None:
+        sync_ledger_from_state(self.state)
+        if self.state.ledger:
+            final = compress_ledger(self.state.ledger)
+            self.state.ledger.confidence_by_issue = recompute_confidence(final).by_issue
+
+    def _record_structured(self, agent: str, spoken: str, structured: dict[str, Any]) -> None:
+        if not hasattr(self.state, "agent_outputs"):
+            self.state.agent_outputs = []
+        self.state.agent_outputs.append({
+            "agent": agent,
+            "spoken_text": spoken,
+            "structured": structured,
+        })
 
 
 # ---------- small utilities ----------

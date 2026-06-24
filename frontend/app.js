@@ -4,7 +4,7 @@ const AGENTS = [
   { id: "judge", name: "The Bench", role: "Presiding judge" },
   { id: "precedent", name: "Precedent", role: "Finds Indian authority" },
   { id: "counter", name: "Opposing Counsel", role: "Rebuts your submission" },
-  { id: "weakness", name: "Coach", role: "Spots weaknesses" },
+  { id: "advisor", name: "Advisor", role: "Spots weaknesses" },
   { id: "citation", name: "Citation Check", role: "Verifies citations" },
 ];
 
@@ -100,7 +100,7 @@ function renderAgents() {
 }
 
 function setAgent(id, st) {
-  const row = $("agent-" + id);
+  const row = $("agent-" + id) || (id === "weakness" ? $("agent-advisor") : null);
   if (!row) return;
   row.classList.remove("working", "done");
   if (st) row.classList.add(st);
@@ -147,6 +147,32 @@ function renderPrecedents(list) {
     wrap.appendChild(el);
   }
   switchTab("authorities");
+}
+
+function renderLedger(ledger) {
+  const wrap = $("ledger");
+  if (!wrap || !ledger) return;
+  wrap.querySelector(".empty")?.remove();
+  const parts = [];
+  const section = (title, items) => {
+    if (!items || !items.length) return;
+    parts.push(`<div class="ledger-section"><h4>${escapeHtml(title)}</h4><ul>`);
+    for (const item of items.slice(0, 12)) {
+      const conf = ledger.confidence_by_issue?.[item.issue_id];
+      const confStr = conf != null ? ` <span class="conf">${Math.round(conf * 100)}%</span>` : "";
+      parts.push(`<li>${escapeHtml(item.text || "")}${confStr}</li>`);
+    }
+    parts.push("</ul></div>");
+  };
+  section("Claims", ledger.claims);
+  section("Counters", ledger.counters);
+  section("Authorities", ledger.authorities);
+  section("Weaknesses", ledger.weaknesses);
+  if (ledger.confidence_by_issue?.global != null) {
+    parts.push(`<div class="ledger-global">Global confidence: <strong>${Math.round(ledger.confidence_by_issue.global * 100)}%</strong></div>`);
+  }
+  wrap.innerHTML = parts.length ? parts.join("") : '<div class="empty">No ledger entries yet.</div>';
+  switchTab("ledger");
 }
 
 function renderFeedback(fb) {
@@ -241,6 +267,10 @@ function handleMessage(msg) {
 
     case "session_state":
       if (msg.state) setSessionState(msg.state);
+      break;
+
+    case "ledger":
+      renderLedger(msg.ledger);
       break;
 
     case "feedback":
@@ -456,7 +486,6 @@ $("textInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendT
 function sendTyped() {
   const v = $("textInput").value.trim();
   if (!v) return;
-  addTurn("advocate", v);
   startTimer();
   setSessionState("processing");
   send({ type: "text", text: v });
@@ -486,6 +515,12 @@ $("settingsBtn").addEventListener("click", () => {
     settings: {
       bench_temperament: $("s-temperament").value,
       judge_persona: $("s-persona").value.trim(),
+      practice_mode: $("s-mode").value,
+      language: {
+        ui_language: $("s-ui-lang").value,
+        spoken_language: $("s-spoken-lang").value,
+        custom_language_hint: $("s-lang-hint").value.trim(),
+      },
     },
   });
 });

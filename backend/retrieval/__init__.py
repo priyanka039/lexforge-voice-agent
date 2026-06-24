@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..config import Settings
 from .base import CompositeRetriever, PrecedentResult, PrecedentRetriever
 from .citations import Citation, extract_citations, normalize_citation, normalize_spoken_numbers
+from .deterministic import DeterministicRetriever
 from .duckduckgo import DuckDuckGoRetriever
 from .indiankanoon import IndianKanoonRetriever
 from .legal_vocab import detect_topics, stt_biasing_prompt
@@ -22,10 +23,11 @@ __all__ = [
     "detect_topics",
     "stt_biasing_prompt",
     "build_retriever",
+    "DeterministicRetriever",
 ]
 
 
-def build_retriever(settings: Settings) -> CompositeRetriever:
+def build_retriever(settings: Settings, vocab=None) -> DeterministicRetriever | CompositeRetriever:
     """Assemble the composite retriever from configured backends.
 
     All defaults are FREE (no token): Wikipedia + DuckDuckGo + landmark seed
@@ -47,4 +49,7 @@ def build_retriever(settings: Settings) -> CompositeRetriever:
         backends.append(DuckDuckGoRetriever(t, enabled=True))
     # Always include the seed corpus as a guaranteed fallback.
     backends.append(SeedCorpusRetriever())
-    return CompositeRetriever(backends, timeout_s=t)
+    composite = CompositeRetriever(backends, timeout_s=t)
+    if vocab is not None:
+        return DeterministicRetriever(composite, vocab, timeout_s=t)
+    return composite

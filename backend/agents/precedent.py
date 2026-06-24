@@ -6,7 +6,8 @@ or two. Also pre-fetches in the background so it is ready before being asked.
 """
 from __future__ import annotations
 
-from ..retrieval.base import CompositeRetriever, PrecedentResult
+from ..retrieval.base import PrecedentResult
+from ..retrieval.deterministic import DeterministicRetriever
 from ..state import MootCourtState
 from .base import Agent, AgentResult, Message
 
@@ -21,7 +22,7 @@ invent a citation that is not in the candidates."""
 class PrecedentAgent(Agent):
     name = "precedent"
 
-    def __init__(self, llm, settings, retriever: CompositeRetriever):
+    def __init__(self, llm, settings, retriever):
         super().__init__(llm, settings)
         self.retriever = retriever
 
@@ -30,6 +31,9 @@ class PrecedentAgent(Agent):
         q = query or state.last_advocate_text() or " ".join(state.discussed_topics[-3:])
         if not q.strip():
             return []
+        issues = list(state.brief.issues or []) + list(state.discussed_topics[-4:])
+        if isinstance(self.retriever, DeterministicRetriever):
+            return await self.retriever.search(q, limit=limit, issue_keywords=issues)
         return await self.retriever.search(q, limit=limit)
 
     async def respond(self, state: MootCourtState,

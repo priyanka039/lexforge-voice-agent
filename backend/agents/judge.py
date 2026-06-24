@@ -1,82 +1,89 @@
-"""Judge agent — the AI bench.
-
-The most distinctive feature: a presiding judge of an Indian court who probes
-the advocate's submissions with sharp, doctrinally-grounded questions. This is
-the agent that usually *speaks*, and it streams sentence-by-sentence so TTS can
-start before the full answer is ready.
-"""
+"""Judge agent — procedural + substantive bench (Phase 4)."""
 from __future__ import annotations
 
 from typing import AsyncIterator
 
-from ..state import BenchTemperament, MootCourtState
+from ..state import BenchTemperament, Intent, MootCourtState
 from .base import Agent, AgentResult, Message
+from .context import build_bounded_context
+from .schema import JudgeOutput
 
-_PERSONA = """You are the Hon'ble Judge presiding over an Indian moot court \
-(Supreme Court / High Court setting). You are courteous but rigorous, in the \
-tradition of an Indian appellate bench. You test the advocate's reasoning: you \
-probe weak premises, demand authority for propositions, pose hypotheticals, and \
-occasionally play devil's advocate. You address the speaker as "Counsel" or \
-"Mr./Ms. Counsel". You may say "Yes, counsel", "Let me stop you there", or \
-"Assuming that is so, how do you meet...". You never give legal advice to the \
-advocate and never argue their case for them; you interrogate it."""
+_PROCEDURAL = """You are the Hon'ble Judge presiding over an Indian moot court. \
+This turn concerns procedure or turn-taking: whether counsel may proceed, time \
+limits, or scheduling. Be brief and courteous. Address the speaker as Counsel."""
+
+_SUBSTANTIVE = """You are the Hon'ble Judge presiding over an Indian moot court \
+(Supreme Court / High Court setting). You are courteous but rigorous. You test \
+the advocate's reasoning: probe weak premises, demand authority, pose hypotheticals. \
+Address the speaker as Counsel. Never give legal advice or argue their case."""
 
 _TEMPERAMENT = {
     BenchTemperament.COLD: (
-        "Temperament: a COLD bench. Let counsel develop their argument. Intervene "
-        "sparingly and only on a genuinely important point; often a brief "
-        "acknowledgement is enough."),
+        "Temperament: COLD bench — intervene sparingly; brief acknowledgement often suffices."),
     BenchTemperament.BALANCED: (
-        "Temperament: a BALANCED appellate bench. Engage with one focused question "
-        "or observation per turn."),
+        "Temperament: BALANCED — one focused question or observation per turn."),
     BenchTemperament.HOT: (
-        "Temperament: a HOT, interventionist bench. Press hard with sharp, rapid "
-        "questions; challenge assumptions immediately and do not let weak premises "
-        "pass."),
+        "Temperament: HOT — press hard; challenge assumptions immediately."),
 }
 
 
 class JudgeAgent(Agent):
     name = "judge"
 
-    def _system(self, state: MootCourtState) -> str:
-        parts = [_PERSONA]
+    def _intervention_type(self, state: MootCourtState, intent: Intent | None = None) -> str:
+        if intent in {Intent.PROCEDURAL, Intent.SMALL_TALK}:
+            return "procedural"
+        last = state.transcript[-1].intent if state.transcript else None
+        if last in {Intent.PROCEDURAL, Intent.SMALL_TALK}:
+            return "procedural"
+        return "substantive"
+
+    def _system(self, state: MootCourtState, intervention: str) -> str:
+        base = _PROCEDURAL if intervention == "procedural" else _SUBSTANTIVE
+        parts = [base]
         if state.judge_persona:
-            parts.append("Additional persona direction: " + state.judge_persona)
+            parts.append("Additional persona: " + state.judge_persona)
         parts.append(_TEMPERAMENT.get(state.bench_temperament,
                                       _TEMPERAMENT[BenchTemperament.BALANCED]))
-        parts.append("Case context:\n" + state.context_block())
+        parts.append(build_bounded_context(state))
         parts.append(self._voice_discipline())
-        parts.append("Ask one focused question or make one pointed observation per "
-                     "turn. If the advocate dodged your previous question, press "
-                     "them on it.")
+        if intervention == "substantive":
+            parts.append("Ask one focused question. If counsel dodged your prior question, press them.")
+        else:
+            parts.append("One brief procedural response only.")
         return "\n\n".join(parts)
 
     def _user(self, state: MootCourtState, weaknesses: list[str] | None = None) -> str:
-        parts = ["Recent exchange:\n" + state.recent_dialogue(8)]
-        if weaknesses:
-            parts.append(
-                "Privately, these weaknesses exist in the advocate's position "
-                "(use them to frame a probing question, do not read them out): "
-                + "; ".join(weaknesses)
-            )
-        parts.append("Give the bench's next spoken intervention now.")
+        parts = ["Give the bench's next spoken intervention now."]
+        if weaknesses and state.bench_temperament != BenchTemperament.COLD:
+            parts.insert(0,
+                "Private weaknesses (frame a question, do not read aloud): "
+                + "; ".join(weaknesses))
         return "\n\n".join(parts)
 
     async def respond(self, state: MootCourtState,
-                      weaknesses: list[str] | None = None) -> AgentResult:
+                      weaknesses: list[str] | None = None,
+                      intent: Intent | None = None) -> AgentResult:
+        intervention = self._intervention_type(state, intent)
         text = await self.llm.chat(
-            [Message("system", self._system(state)),
+            [Message("system", self._system(state, intervention)),
              Message("user", self._user(state, weaknesses))],
             model=self.model, temperature=0.6, max_tokens=180,
         )
-        return AgentResult(agent=self.name, spoken_text=text,
-                           state_updates={"open_judge_question": text})
+        structured = JudgeOutput(intervention_type=intervention, question=text).to_structured()
+        return AgentResult(
+            agent=self.name,
+            spoken_text=text,
+            structured=structured,
+            state_updates={"open_judge_question": text},
+        )
 
     async def stream(self, state: MootCourtState,
-                     weaknesses: list[str] | None = None) -> AsyncIterator[str]:
+                     weaknesses: list[str] | None = None,
+                     intent: Intent | None = None) -> AsyncIterator[str]:
+        intervention = self._intervention_type(state, intent)
         async for chunk in self.llm.stream_chat(
-            [Message("system", self._system(state)),
+            [Message("system", self._system(state, intervention)),
              Message("user", self._user(state, weaknesses))],
             model=self.model, temperature=0.6, max_tokens=180,
         ):

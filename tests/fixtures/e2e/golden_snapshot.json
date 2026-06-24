@@ -1,0 +1,7 @@
+{
+  "transition_digest": "27fa84f568d7741068354dc675126816d8ee55a427035209fb52ceeabbf367c3",
+  "ledger_digest": "3f7f9306c1a344affce6895695db9a80bbce24892d2cf8ea805818bd0b2f823e",
+  "authority_set_digest": "33af68e01b9bc3a72c3264825b3e4397ac996e7cb4f28ad875362ce1972ad9d2",
+  "vocab_digest": "4c26637ca31e8c558f76bde2f787216c9a94468fde7c38aeb0c5f1afe0defcf8",
+  "session_canonical_digest": "6da212dd2b06324845e11df7067f21a2a25f011b8dc84bf612212e87d4c3ad7d"
+}

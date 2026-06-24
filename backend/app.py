@@ -27,9 +27,11 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .gemini_voice import SttSession, TtsSession
-from .orchestrator import EventType, Orchestrator
+from .orchestrator import EventType
 from .persistence import SessionStore
-from .state import BenchTemperament
+from .runtime import EventSource
+from .session_runtime import SessionRuntime
+from .state import BenchTemperament, PracticeMode
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _FRONTEND = os.path.join(os.path.dirname(_HERE), "frontend")
@@ -80,7 +82,8 @@ class Connection:
     def __init__(self, ws: WebSocket):
         self.ws = ws
         self.settings = get_settings()
-        self.orch = Orchestrator(self.settings)
+        self.store = SessionStore()
+        self.runtime = SessionRuntime(self.settings, store=self.store)
         self.stt: Optional[SttSession] = None
         self.tts: Optional[TtsSession] = None
         self.voice_enabled = self.settings.has_gemini
@@ -110,15 +113,17 @@ class Connection:
                         f"({short})"
                     ),
                 })
+        await self.runtime.start(self._outbound)
         await self.send({
             "type": "ready",
             "voice_enabled": self.voice_enabled,
             "brain": "openai" if self.settings.has_openai else "stub",
-            "session_id": self.orch.state.session_id,
+            "session_id": self.runtime.state.session_id,
             "sample_rate_in": self.settings.input_sample_rate,
             "sample_rate_out": self.settings.output_sample_rate,
-            "bench_temperament": self.orch.state.bench_temperament.value,
+            "bench_temperament": self.runtime.state.bench_temperament.value,
             "live_model": getattr(self.stt, "_model", None) or self.settings.gemini_live_model,
+            "runtime": "d-levm-v1",
         })
 
     async def close(self) -> None:
@@ -129,7 +134,14 @@ class Connection:
         with contextlib.suppress(Exception):
             if self.tts:
                 await self.tts.__aexit__(None, None, None)
-        await self.orch.close()
+        await self.runtime.close()
+
+    async def _outbound(self, obj: dict) -> None:
+        if obj.get("type") == "speaking":
+            await self.send(obj)
+            await self._speak_sentence(obj.get("agent", ""), obj.get("text", ""))
+            return
+        await self.send(obj)
 
     # ---- inbound: browser -> server ----
     async def inbound_pump(self) -> None:
@@ -142,12 +154,9 @@ class Connection:
             elif mtype == "audio_end" and self.stt:
                 await self.stt.end_audio()
             elif mtype == "text":
-                # typed input path (also used when voice is disabled)
                 text = (msg.get("text") or "").strip()
                 if text:
-                    await self.send({"type": "transcript", "role": "advocate",
-                                     "text": text, "final": True})
-                    self._start_turn(text)
+                    self._start_turn(text, source=EventSource.UI)
             elif mtype == "brief":
                 self._apply_brief(msg.get("brief", {}))
                 await self.send({"type": "note", "message": "Case brief updated."})
@@ -179,16 +188,18 @@ class Connection:
                 self._start_turn(ev["text"])
 
     # ---- brain pipeline + TTS ----
-    def _start_turn(self, text: str) -> None:
-        # one active reply at a time; supersede any in-flight reply
+    def _start_turn(self, text: str, *, source: EventSource = EventSource.VOICE) -> None:
         if self.speak_task and not self.speak_task.done():
             self.speak_task.cancel()
-        self.speak_task = asyncio.create_task(self._run_turn(text))
+        self.speak_task = asyncio.create_task(self._run_turn(text, source=source))
 
-    async def _run_turn(self, text: str) -> None:
+    async def _run_turn(self, text: str, *, source: EventSource) -> None:
         try:
-            async for event in self.orch.handle_turn(text):
-                await self._forward_event(event)
+            await self.send({"type": "transcript", "role": "advocate",
+                             "text": text, "final": True})
+            accepted = await self.runtime.enqueue_user_text(text, source=source)
+            if not accepted:
+                await self.send({"type": "note", "message": "Turn queue full — try again."})
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -201,9 +212,9 @@ class Connection:
 
     async def _run_feedback(self) -> None:
         try:
-            async for event in self.orch.run_feedback():
+            async for event in self.runtime.orchestrator.run_feedback():
                 await self._forward_event(event)
-            store.save(self.orch.state)
+            self.store.save(self.runtime.state)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -230,12 +241,11 @@ class Connection:
         elif t == EventType.SPEAK_DONE:
             await self.send({"type": "audio_done", **event.data})
         elif t == EventType.TURN_DONE:
-            store.save(self.orch.state)
+            self.store.save(self.runtime.state)
             await self.send({"type": "session_state", "state": "idle"})
             await self.send({"type": "turn_done"})
 
     async def _speak_sentence(self, agent: str, text: str) -> None:
-        await self.send({"type": "speaking", "agent": agent, "text": text})
         if not (self.voice_enabled and self.tts):
             return
         try:
@@ -256,7 +266,7 @@ class Connection:
         self.speak_task = None
 
     def _apply_brief(self, brief: dict) -> None:
-        b = self.orch.state.brief
+        b = self.runtime.state.brief
         for key in ("title", "court", "appellant", "respondent", "user_side", "facts"):
             if key in brief and brief[key]:
                 setattr(b, key, brief[key])
@@ -267,11 +277,23 @@ class Connection:
         temp = settings.get("bench_temperament")
         if temp:
             try:
-                self.orch.state.bench_temperament = BenchTemperament(temp)
+                self.runtime.state.bench_temperament = BenchTemperament(temp)
             except ValueError:
                 pass
         if "judge_persona" in settings:
-            self.orch.state.judge_persona = str(settings["judge_persona"] or "")
+            self.runtime.state.judge_persona = str(settings["judge_persona"] or "")
+        mode = settings.get("practice_mode")
+        if mode:
+            try:
+                self.runtime.state.practice_mode = PracticeMode(mode)
+                self.runtime.mode = self.runtime.state.practice_mode.value
+            except ValueError:
+                pass
+        lang = settings.get("language")
+        if isinstance(lang, dict):
+            from .state import LanguageSettings
+            self.runtime.state.language = LanguageSettings.from_dict(lang)
+        self.runtime._sync_engine_context()
 
 
 @app.websocket("/ws")

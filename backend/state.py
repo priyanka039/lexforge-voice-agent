@@ -42,6 +42,35 @@ class BenchTemperament(str, Enum):
     HOT = "hot"            # interventionist; frequent, sharp questions
 
 
+class PracticeMode(str, Enum):
+    COURT = "court"    # full bench with judge
+    DEBATE = "debate"  # peer debate — judge generation skipped at guard level
+
+
+@dataclass
+class LanguageSettings:
+    ui_language: str = "en"
+    spoken_language: str = "en"
+    custom_language_hint: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ui_language": self.ui_language,
+            "spoken_language": self.spoken_language,
+            "custom_language_hint": self.custom_language_hint,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> LanguageSettings:
+        if not data:
+            return cls()
+        return cls(
+            ui_language=str(data.get("ui_language", "en")),
+            spoken_language=str(data.get("spoken_language", "en")),
+            custom_language_hint=str(data.get("custom_language_hint", "")),
+        )
+
+
 @dataclass
 class TranscriptTurn:
     speaker: Speaker
@@ -90,9 +119,18 @@ class MootCourtState:
     transcript: list[TranscriptTurn] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
 
+    # Practice + language (Phase 2)
+    practice_mode: PracticeMode = PracticeMode.COURT
+    language: LanguageSettings = field(default_factory=LanguageSettings)
+
     # Bench configuration (settable from the UI).
     bench_temperament: BenchTemperament = BenchTemperament.BALANCED
     judge_persona: str = ""              # optional extra persona flavour
+
+    # Structured argument ledger (Phase 2)
+    ledger: "ArgumentLedger | None" = None
+
+    agent_outputs: list[dict[str, Any]] = field(default_factory=list)
 
     # Latest performance feedback, if generated.
     feedback: Optional[dict[str, Any]] = None
@@ -132,7 +170,10 @@ class MootCourtState:
     def context_block(self) -> str:
         """Compact shared context handed to every specialist."""
         lines = [self.brief.summary()]
+        lines.append(f"Practice mode: {self.practice_mode.value}.")
         lines.append(f"Bench temperament: {self.bench_temperament.value}.")
+        if self.language.spoken_language != "en":
+            lines.append(f"Spoken language: {self.language.spoken_language}.")
         if self.open_judge_question:
             lines.append(f"Pending bench question: {self.open_judge_question}")
         if self.cited_cases:
@@ -142,19 +183,31 @@ class MootCourtState:
         if self.known_weaknesses:
             lines.append("Known weaknesses in advocate's case: "
                          + "; ".join(self.known_weaknesses[-4:]))
+        if self.ledger and self.ledger.active_entries("claims"):
+            recent = [e.text for e in self.ledger.active_entries("claims")[-3:]]
+            lines.append("Active claims: " + "; ".join(recent))
         return "\n".join(lines)
 
     def elapsed_seconds(self) -> float:
         return max(0.0, time.time() - self.started_at)
 
     def to_dict(self) -> dict[str, Any]:
+        from .ledger import ArgumentLedger, sync_ledger_from_state
+
+        if self.ledger is None:
+            self.ledger = ArgumentLedger()
+        sync_ledger_from_state(self)
         return {
             "session_id": self.session_id,
             "started_at": self.started_at,
             "brief": self.brief.__dict__,
+            "practice_mode": self.practice_mode.value,
+            "language": self.language.to_dict(),
             "bench_temperament": self.bench_temperament.value,
             "judge_persona": self.judge_persona,
             "transcript": [t.to_dict() for t in self.transcript],
+            "ledger": self.ledger.to_dict() if self.ledger else {},
+            "agent_outputs": list(self.agent_outputs),
             "cited_cases": self.cited_cases,
             "discussed_topics": self.discussed_topics,
             "open_judge_question": self.open_judge_question,

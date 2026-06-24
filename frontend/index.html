@@ -82,6 +82,7 @@
           <button type="button" class="nav-tab" data-tab="brief"><svg class="ico sm"><use href="/icons.svg#icon-brief"></use></svg> Brief</button>
           <button type="button" class="nav-tab" data-tab="notes"><svg class="ico sm"><use href="/icons.svg#icon-note"></use></svg> Notes</button>
           <button type="button" class="nav-tab" data-tab="authorities"><svg class="ico sm"><use href="/icons.svg#icon-book"></use></svg> Cases</button>
+          <button type="button" class="nav-tab" data-tab="ledger"><svg class="ico sm"><use href="/icons.svg#icon-book"></use></svg> Ledger</button>
           <button type="button" class="nav-tab" data-tab="settings"><svg class="ico sm"><use href="/icons.svg#icon-settings"></use></svg> Bench</button>
         </nav>
 
@@ -119,8 +120,42 @@
             <div id="precedents"><div class="empty">Cited and retrieved cases appear here.</div></div>
           </section>
 
+          <section class="pane" data-pane="ledger">
+            <h3 class="pane-title">Argument Ledger</h3>
+            <div id="ledger"><div class="empty">Structured claims, authorities, and confidence appear here after each turn.</div></div>
+          </section>
+
           <section class="pane" data-pane="settings">
             <h3 class="pane-title">Bench Settings</h3>
+            <div class="field">
+              <label>Practice mode</label>
+              <select id="s-mode">
+                <option value="court" selected>Court — bench questions you</option>
+                <option value="debate">Debate — opposing counsel responds</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Spoken language</label>
+              <select id="s-spoken-lang">
+                <option value="en" selected>English</option>
+                <option value="hi">Hindi</option>
+                <option value="ta">Tamil</option>
+                <option value="te">Telugu</option>
+                <option value="bn">Bengali</option>
+                <option value="mr">Marathi</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>UI language</label>
+              <select id="s-ui-lang">
+                <option value="en" selected>English</option>
+                <option value="hi">Hindi</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Language hint (optional)</label>
+              <input id="s-lang-hint" placeholder="e.g. formal legal Hindi" />
+            </div>
             <div class="field">
               <label>Temperament</label>
               <select id="s-temperament">

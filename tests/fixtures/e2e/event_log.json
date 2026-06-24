@@ -1,0 +1,13 @@
+{
+  "description": "Fixed advocate turns for e2e determinism replay",
+  "turns": [
+    {
+      "turn_id": "turn00000001",
+      "text": "My lord, I submit the constitutional amendment is valid under Article 368."
+    },
+    {
+      "turn_id": "turn00000002",
+      "text": "I rely on Kesavananda Bharati regarding the basic structure doctrine."
+    }
+  ]
+}

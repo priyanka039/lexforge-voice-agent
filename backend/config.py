@@ -85,9 +85,14 @@ class Settings:
     port: int = field(default_factory=lambda: int(os.getenv("PORT", "8000")))
 
     # --- Behaviour tuning ---
-    # Max spoken sentences any agent should produce (voice UX discipline).
     max_spoken_sentences: int = field(
         default_factory=lambda: int(os.getenv("MAX_SPOKEN_SENTENCES", "3"))
+    )
+    max_turn_index: int = field(
+        default_factory=lambda: int(os.getenv("MAX_TURN_INDEX", "500"))
+    )
+    sessions_dir: str = field(
+        default_factory=lambda: os.getenv("SESSIONS_DIR", "")
     )
 
     @property

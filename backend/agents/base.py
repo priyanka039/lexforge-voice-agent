@@ -32,6 +32,7 @@ class AgentResult:
     detail: str = ""                    # longer text for the UI panel / transcript notes
     data: dict[str, Any] = field(default_factory=dict)
     state_updates: dict[str, Any] = field(default_factory=dict)
+    structured: dict[str, Any] = field(default_factory=dict)
 
 
 class LLMClient(abc.ABC):

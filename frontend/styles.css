@@ -734,6 +734,19 @@ body {
   padding: 8px 0;
 }
 
+.ledger-section { margin-bottom: 14px; }
+.ledger-section h4 {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gold-dim);
+  margin: 0 0 6px;
+}
+.ledger-section ul { margin: 0; padding-left: 18px; }
+.ledger-section li { font-size: 12px; line-height: 1.45; margin-bottom: 4px; color: var(--ink-soft); }
+.ledger-section .conf { color: var(--gold-bright); font-size: 10px; }
+.ledger-global { font-size: 12px; color: var(--ink-soft); margin-top: 8px; }
+
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-thumb { background: #2a3344; border-radius: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

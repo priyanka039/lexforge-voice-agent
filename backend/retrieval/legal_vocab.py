@@ -6,7 +6,9 @@ Also used to detect legal topics in an utterance for the orchestrator.
 """
 from __future__ import annotations
 
-LEGAL_HOTWORDS: list[str] = [
+LEGAL_VOCAB_VERSION = "1.0.0"
+
+LEGAL_HOTWORDS: tuple[str, ...] = (
     # Procedure & remedies
     "writ petition", "special leave petition", "SLP", "public interest litigation", "PIL",
     "locus standi", "res judicata", "sub judice", "stare decisis", "obiter dicta",
@@ -40,7 +42,7 @@ LEGAL_HOTWORDS: list[str] = [
     "ipso facto", "ratio", "volenti non fit injuria", "ubi jus ibi remedium",
     "audi alteram partem", "ejusdem generis", "noscitur a sociis", "pari materia",
     "ex post facto", "double jeopardy", "autrefois acquit",
-]
+)
 
 
 def stt_biasing_prompt() -> str:

@@ -9,6 +9,9 @@ all in a continuous spoken conversation.
 > streaming STT with native VAD/barge-in, and verbatim TTS).
 > **Brain:** any **OpenAI-compatible** API (swappable). Gemini never reasons
 > about law; all legal reasoning is done by the multi-agent brain.
+> **Runtime:** **D-LEVM v1** — a deterministic execution kernel that routes
+> every user turn through a single-writer event queue, guarded FSM transitions,
+> and a staged effect DAG before state is committed.
 
 ---
 
@@ -20,14 +23,17 @@ all in a continuous spoken conversation.
  │ mic ──► worklet ──┼───── ws ──────►│  Gemini Live  (STT session)           │
  │                   │                │     │ input transcription + VAD        │
  │ transcript / UI   │◄───── ws ──────┤     ▼                                  │
- │ agent activity    │   events       │  ORCHESTRATOR  (thin supervisor)       │
- │ authorities       │                │   • intent router (fast model)         │
- │ speaker ◄─ queue ─┼───── ws ◄──────┤   • shared MootCourtState (blackboard) │
- └───────────────────┘   PCM 24k      │   • parallel dispatch + turn-taking    │
-                                       │        ├─ Judge      (speaks, streamed)│
+ │ ledger / agents   │   events       │  SESSION RUNTIME  (D-LEVM v1)          │
+ │ speaker ◄─ queue ─┼───── ws ◄──────┤   • EventSequencer (single writer)   │
+ └───────────────────┘   PCM 24k      │   • TransitionEngine (guarded FSM)     │
+                                       │   • EffectRunner (staged DAG)          │
+                                       │        └─ process_user_turn            │
+                                       │              └─ ORCHESTRATOR           │
+                                       │   • ArgumentLedger + confidence      │
+                                       │        ├─ Judge      (speaks)          │
                                        │        ├─ Precedent  (Indian case law) │
                                        │        ├─ Counter    (opposing counsel)│
-                                       │        ├─ Weakness   (silent analyst)  │
+                                       │        ├─ Advisor    (silent analyst)  │
                                        │        └─ Citation   (verify cites)    │
                                        │   • sentence-level TTS pipelining      │
                                        │     ──► Gemini Live (TTS session)      │
@@ -36,28 +42,54 @@ all in a continuous spoken conversation.
 
 **Why this shape**
 - **Supervisor/worker**, not a monolith. Each specialist has a narrow job and a
-  short, fast prompt. Background agents (Weakness, Precedent pre-fetch) run in
+  short, fast prompt. Background agents (Advisor, Precedent pre-fetch) run in
   **parallel** while the Judge speaks.
+- **D-LEVM kernel** keeps turn processing deterministic: ingress envelopes carry
+  dual hashes, effects run on a staging copy, and only successful commits update
+  live session state. The WebSocket `ready` message reports `"runtime": "d-levm-v1"`.
 - **Sentence-level TTS pipelining**: the brain streams tokens; complete
   sentences are voiced immediately, so audio starts before the full reply is
   generated.
 - **Barge-in**: when you start speaking while the bench is talking, playback is
   flushed instantly (Gemini's native VAD drives this).
 
+### D-LEVM v1 (deterministic execution kernel)
+
+| Module | Role |
+|---|---|
+| `canonical.py` | NFKC normalization, stable JSON digests, float rounding |
+| `ingress.py` | Dual-hash ingress envelopes (`raw` + `normalized`) |
+| `event_queue.py` | Single-writer sequencer, bounded queue, stale-event discard |
+| `guards.py` | Six-step guard pipeline before every transition |
+| `runtime.py` | Two-phase `plan_dispatch` → `commit_transition` FSM |
+| `effects.py` | Staged effect DAG with rollback and recursion lock |
+| `session_runtime.py` | Sole owner of engine, queue, and `MootCourtState` |
+| `ledger.py` | Argument ledger, compression, pure confidence recompute |
+| `replay.py` | Offline E2E replay harness for determinism verification |
+
+Legal vocabulary is **frozen at session start** and included in transition
+snapshots. Retrieval scoring is deterministic when the frozen vocab is supplied.
+
 ## Key features
 - **Live voice bench** — argue out loud; the judge questions you in real time
   with native VAD and **barge-in** (start talking and the bench yields).
-- **Five specialists** — Judge, Precedent, Opposing Counsel, Coach (silent
-  weakness analyst), Citation checker.
+- **Five specialists** — Judge, Precedent, Opposing Counsel, Advisor (silent
+  weakness analyst; legacy alias `WeaknessAgent`), Citation checker.
+- **Practice modes** — **Court** (full bench), **Spar** (opposing counsel focus),
+  or **Coach** (guided feedback).
+- **Language settings** — UI language, spoken language, and optional custom hint
+  applied before TTS and on-screen output.
+- **Argument ledger** — structured claims, counters, authorities, weaknesses,
+  and per-issue confidence; visible in the **Ledger** tab after each turn.
 - **Bench temperament** — switch between a **cold**, **balanced**, or **hot**
   (interventionist) bench, plus an optional custom judge persona.
 - **Post-hearing feedback** — "End hearing & get feedback" scores you out of 10
   across five dimensions (articulation, use of authority, responsiveness, legal
   soundness, court craft) with concrete strengths and fixes — like a real bench.
-- **Quick actions** — spar with opposing counsel, ask your coach for the key
+- **Quick actions** — spar with opposing counsel, ask your advisor for the key
   weakness, all from one click.
 - **Moot timer** and **transcript export** — every session is auto-saved to
-  `sessions/` as JSON + Markdown and downloadable from the UI
+  `sessions/` as canonical JSON + Markdown and downloadable from the UI
   (`/api/session/{id}/transcript.md`).
 - **Resilient voice** — Gemini Live sessions auto-reconnect with session
   resumption, so a full multi-minute round never drops.
@@ -68,6 +100,8 @@ all in a continuous spoken conversation.
   1973 SC 2369`) and parses AIR / SCC / SCR formats.
 - **Legal hotwords** (`backend/retrieval/legal_vocab.py`): 200+ Indian legal
   terms bias the STT decoder (`"writ petition"` not `"right petition"`).
+- **Deterministic retrieval** (`backend/retrieval/deterministic.py`): tiered
+  scoring with frozen vocab for reproducible authority ranking.
 - **Short spoken answers**: every agent is constrained to ≤3 spoken sentences.
 - **Real authorities — free, no token**: by default it blends **Wikipedia**
   (landmark Indian judgments with clean holdings), **DuckDuckGo** web search
@@ -103,6 +137,8 @@ token required. (Indian Kanoon content still shows up as links via DuckDuckGo.)
      offline stub keeps the pipeline runnable.
    - Precedent retrieval is **free with no key** (Wikipedia + DuckDuckGo + seed
     corpus). `INDIANKANOON_API_TOKEN` is optional (paid) and only improves quality.
+   - `SESSIONS_DIR` — optional override for where session JSON/Markdown is stored.
+   - `MAX_TURN_INDEX` — optional cap on turns per session (default `500`).
 3. **Run**:
    ```powershell
    .\run.ps1
@@ -111,6 +147,13 @@ token required. (Indian Kanoon content still shows up as links via DuckDuckGo.)
    ```
 4. Open **http://127.0.0.1:8000**, fill in the case brief, press
    **“Rise & address the bench”**, and argue.
+
+5. **Smoke check** (optional):
+   ```powershell
+   .\.venv\Scripts\python.exe -m pytest tests/ -q
+   Invoke-RestMethod http://127.0.0.1:8000/health
+   ```
+   `/health` returns `ok`, voice/brain status, and active retrieval sources.
 
 > Microphone capture needs a secure context. `http://127.0.0.1` is treated as
 > secure by browsers, so local use works without HTTPS.
@@ -126,28 +169,57 @@ Implement `PrecedentRetriever.search()` (`backend/retrieval/base.py`) for your
 ChromaDB/HTTP endpoint and add it to `build_retriever()` ahead of the fallbacks.
 
 ## Tests
+
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests -q
+.\.venv\Scripts\python.exe -m pytest tests/ -q
 ```
-14 tests cover citation normalisation (incl. spoken-number repair), the seed
-corpus, the orchestrator pipeline, the feedback flow, and bench temperament —
-all runnable offline with no API keys.
+
+**50 tests**, all runnable offline with no API keys:
+
+| Suite | Covers |
+|---|---|
+| `test_canonical` | Stable encoding, digests, float edge cases |
+| `test_ingress` | Dual-hash ingress envelopes |
+| `test_event_queue` | Single-writer sequencing, backpressure |
+| `test_effects` | Staged DAG, rollback, recursion lock |
+| `test_runtime` | FSM plan/commit, transition digests, guards |
+| `test_ledger`, `test_compression` | Ledger, confidence recompute, compression |
+| `test_session_runtime` | End-to-end turn through D-LEVM kernel |
+| `test_retrieval_scoring` | Deterministic authority scoring |
+| `test_agents_schema`, `test_language` | Structured outputs, language middleware |
+| `test_e2e_determinism` | Fixed event-log replay → identical digests |
+| `test_concurrency_boundary` | State commits only via `SessionRuntime` |
+| `test_citations`, `test_pipeline` | Citation repair, orchestrator smoke |
+
+E2E fixtures live in `tests/fixtures/e2e/` (`event_log.json`, `golden_snapshot.json`).
 
 ## Project layout
 ```
 backend/
-  app.py            FastAPI + WebSocket voice loop (barge-in, audio bridging)
-  config.py         env-driven settings
-  state.py          shared MootCourtState (blackboard) + transcript + markdown export
-  persistence.py    SessionStore (JSON + Markdown) — the Matter-system seam
-  gemini_voice.py   Gemini Live STT + verbatim TTS (auto-reconnect + resumption)
-  orchestrator.py   supervisor: intent router, dispatch, sentence streaming, feedback
-  agents/           judge, precedent, counter, weakness, citation, feedback + LLM client
-  retrieval/        wikipedia, duckduckgo, seed corpus, IK API/scrape, citations, vocab
+  app.py              FastAPI + WebSocket voice loop (routes via SessionRuntime)
+  config.py           env-driven settings (SESSIONS_DIR, MAX_TURN_INDEX, …)
+  state.py            MootCourtState, practice mode, language settings
+  persistence.py      SessionStore — canonical JSON + Markdown export
+  session_runtime.py  D-LEVM session owner (queue + engine + effects)
+  runtime.py          TransitionEngine FSM (plan_dispatch / commit_transition)
+  event_queue.py      EventSequencer (R1 single writer)
+  ingress.py          ExternalInputEnvelope (R7 dual hash)
+  guards.py           Pre-transition guard pipeline
+  effects.py          Staged effect DAG executor
+  canonical.py        Canonical encoding + digests
+  ledger.py           ArgumentLedger, compression, confidence
+  language.py         Spoken/UI language middleware
+  replay.py           Offline determinism replay harness
+  gemini_voice.py     Gemini Live STT + verbatim TTS
+  orchestrator.py     intent router, dispatch, sentence streaming, feedback
+  agents/             judge, precedent, counter, advisor, citation, feedback
+  retrieval/          wikipedia, duckduckgo, seed corpus, deterministic scoring
 frontend/
   index.html, styles.css, app.js, pcm-worklet.js
 tests/
-  test_citations.py, test_pipeline.py
+  test_*.py           kernel, agents, retrieval, e2e determinism
+  fixtures/e2e/       replay event log + golden digests
+sessions/             auto-saved session JSON + Markdown (gitignored)
 ```
 
 ## Notes & limitations
@@ -157,5 +229,7 @@ tests/
   Indian Kanoon **public-page scraper is off by default** because their
   `robots.txt` disallows `/search/`; enable `ENABLE_INDIANKANOON_SCRAPE` only if
   you accept that. Be gentle with request volume on any web source.
+- The orchestrator still runs a full turn inside the `process_user_turn` effect;
+  finer-grained FSM decomposition is a future refinement.
 - Latency target: keep replies under ~1.5 s. Use a fast `ROUTER_MODEL`, keep
   prompts short, and the sentence pipelining does the rest.
